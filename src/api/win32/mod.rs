@@ -82,6 +82,11 @@ pub const NIF_SHOWTIP: UINT = 0x00000080;
 pub const NOTIFYICON_VERSION: UINT = 3;
 pub const NOTIFYICON_VERSION_4: UINT = 4;
 
+pub const MF_BYCOMMAND: UINT = 0x00000000;
+pub const MF_BYPOSITION: UINT = 0x00000400;
+pub const MF_UNCHECKED: UINT = 0x00000000;
+pub const MF_CHECKED: UINT = 0x00000008;
+
 STRUCT!{nodebug struct NOTIFYICONDATAA {
     cbSize: DWORD,
     hWnd: HWND,
@@ -505,12 +510,37 @@ impl Window {
         Ok(())
     }
 
-    fn add_menu_entry(&self, item_name: &String) -> Result<u32, SystrayError> {
+    pub fn select_menu_entry(&self, item: u32) -> Result<u32, SystrayError> {
+        unsafe {
+            if user32::CheckMenuItem(self.info.hmenu,
+                                     item,
+                                     MF_BYPOSITION | MF_CHECKED) == 0 {
+                return Err(get_win_os_error("Error checking menu item"));
+            }
+        }
+        Ok(item)
+    }
+
+    pub fn unselect_menu_entry(&self, item: u32) -> Result<u32, SystrayError> {
+        unsafe {
+            if user32::CheckMenuItem(self.info.hmenu,
+                                     item,
+                                     MF_BYPOSITION | MF_UNCHECKED) == 0 {
+                return Err(get_win_os_error("Error unchecking menu item"));
+            }
+        }
+        Ok(item)
+    }
+
+    fn add_menu_entry(&self, item_name: &String, checked: bool) -> Result<u32, SystrayError> {
         let mut st = to_wstring(item_name);
         let idx = self.menu_idx.get();
         self.menu_idx.set(idx + 1);
         let mut item = get_menu_item_struct();
-        item.fMask = MIIM_FTYPE | MIIM_STRING | MIIM_ID | MIIM_STATE;
+        item.fMask = MIIM_FTYPE | MIIM_STRING | MIIM_ID | MIIM_STATE | MIIM_CHECKMARKS;
+        if checked {
+            item.fState = MFS_CHECKED;
+        }
         item.fType = MFT_STRING;
         item.wID = idx;
         item.dwTypeData = st.as_mut_ptr();
@@ -544,9 +574,9 @@ impl Window {
         Ok(idx)
     }
 
-    pub fn add_menu_item<F>(&self, item_name: &String, f: F) -> Result<u32, SystrayError>
+    pub fn add_menu_item<F>(&self, item_name: &String, checked: bool, f: F) -> Result<u32, SystrayError>
         where F: std::ops::Fn(&Window) -> () + 'static {
-        let idx = match self.add_menu_entry(item_name) {
+        let idx = match self.add_menu_entry(item_name, checked) {
             Ok(i) => i,
             Err(e) => {
                 return Err(e);
@@ -555,6 +585,23 @@ impl Window {
         let mut m = self.callback.borrow_mut();
         m.insert(idx, make_callback(f));
         Ok(idx)
+    }
+
+    pub fn clear_menu(&self) -> Result<(), SystrayError> {
+        let mut idx = self.menu_idx.get() - 1;
+        unsafe {
+            while idx > 0 {
+                println!("Delete menu {}", idx);
+                if user32::DeleteMenu(self.info.hmenu,
+                                      idx,
+                                      MF_BYPOSITION) == 0 {
+                    return Err(get_win_os_error("Error clearing menu"));
+                }
+                idx = idx - 1;
+            }
+            self.menu_idx.set(0);
+        }
+        Ok(())
     }
 
     fn set_icon(&self, icon: HICON) -> Result<(), SystrayError> {

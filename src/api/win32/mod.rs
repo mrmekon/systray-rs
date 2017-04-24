@@ -86,6 +86,9 @@ pub const MF_BYCOMMAND: UINT = 0x00000000;
 pub const MF_BYPOSITION: UINT = 0x00000400;
 pub const MF_UNCHECKED: UINT = 0x00000000;
 pub const MF_CHECKED: UINT = 0x00000008;
+pub const MF_ENABLED: UINT = 0x00000000;
+pub const MF_GRAYED: UINT = 0x00000001;
+pub const MF_DISABLED: UINT = 0x00000002;
 
 STRUCT!{nodebug struct NOTIFYICONDATAA {
     cbSize: DWORD,
@@ -218,6 +221,12 @@ STRUCT!{struct TPMPARAMS {
 }}
 
 pub type LPTPMPARAMS = *const TPMPARAMS;
+
+pub enum MenuEnableFlag {
+    Enabled,
+    Disabled,
+    Grayed,
+}
 
 fn to_wstring(str : &str) -> Vec<u16> {
     OsStr::new(str).encode_wide().chain(Some(0).into_iter()).collect::<Vec<_>>()
@@ -510,7 +519,7 @@ impl Window {
         Ok(())
     }
 
-    pub fn select_menu_entry(&self, item: u32) -> Result<u32, SystrayError> {
+    pub fn select_menu_item(&self, item: u32) -> Result<u32, SystrayError> {
         unsafe {
             if user32::CheckMenuItem(self.info.hmenu,
                                      item,
@@ -521,7 +530,23 @@ impl Window {
         Ok(item)
     }
 
-    pub fn unselect_menu_entry(&self, item: u32) -> Result<u32, SystrayError> {
+    pub fn enable_menu_item(&self, item: u32, enable: MenuEnableFlag) -> Result<u32, SystrayError> {
+        let flags = MF_BYPOSITION | match enable {
+            MenuEnableFlag::Enabled => MF_ENABLED,
+            MenuEnableFlag::Disabled => MF_DISABLED,
+            MenuEnableFlag::Grayed => MF_GRAYED,
+        };
+        unsafe {
+            if user32::EnableMenuItem(self.info.hmenu,
+                                     item,
+                                     flags) == 0 {
+                return Err(get_win_os_error("Error enabling menu item"));
+            }
+        }
+        Ok(item)
+    }
+
+    pub fn unselect_menu_item(&self, item: u32) -> Result<u32, SystrayError> {
         unsafe {
             if user32::CheckMenuItem(self.info.hmenu,
                                      item,

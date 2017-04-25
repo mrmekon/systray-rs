@@ -1,7 +1,7 @@
 use {SystrayEvent, SystrayError, Callback, make_callback};
 use std;
 use std::cell::{Cell, RefCell};
-use std::sync::mpsc::{channel, Sender, Receiver};
+use std::sync::mpsc::{channel, Sender, Receiver, TryRecvError};
 use std::os::windows::ffi::OsStrExt;
 use std::ffi::OsStr;
 use std::thread;
@@ -613,12 +613,11 @@ impl Window {
     }
 
     pub fn clear_menu(&self) -> Result<(), SystrayError> {
-        let mut idx = self.menu_idx.get() - 1;
+        let mut idx = self.menu_idx.get();
         unsafe {
             while idx > 0 {
-                println!("Delete menu {}", idx);
                 if user32::DeleteMenu(self.info.hmenu,
-                                      idx,
+                                      idx - 1,
                                       MF_BYPOSITION) == 0 {
                     return Err(get_win_os_error("Error clearing menu"));
                 }
@@ -642,15 +641,26 @@ impl Window {
         Ok(())
     }
 
-    pub fn wait_for_message(&mut self) {
+    pub fn wait_for_message(&mut self, blocking: bool) {
         loop {
             let msg;
-            match self.rx.recv() {
+            let ref rx_ref = self.rx;
+            // Convert recv -> try_recv types
+            let f: Box<Fn() -> Result<SystrayEvent, TryRecvError>> = match blocking {
+                true => Box::new(|| { match rx_ref.recv() {
+                    Ok(m) => Ok(m),
+                    Err(_) => Err(TryRecvError::Disconnected),
+                }}),
+                false => Box::new(|| { rx_ref.try_recv() }),
+            };
+            match f() {
                 Ok(m) => msg = m,
                 Err(_) => {
-                    // If self.rx fails, we're in thread shutdown. Join here.
-                    if let Some(t) = self.windows_loop.take() {
-                        t.join().ok();
+                    if blocking {
+                        // If self.rx fails, we're in thread shutdown. Join here.
+                        if let Some(t) = self.windows_loop.take() {
+                            t.join().ok();
+                        }
                     }
                     break;
                 }
@@ -659,6 +669,9 @@ impl Window {
                 let f = (*self.callback.borrow_mut()).remove(&msg.menu_index).unwrap();
                 f(&self);
                 (*self.callback.borrow_mut()).insert(msg.menu_index, f);
+            }
+            if !blocking {
+                break;
             }
         }
     }

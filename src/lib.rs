@@ -20,7 +20,14 @@ pub enum SystrayError {
     UnknownError,
 }
 
+pub enum SystrayAction {
+    SelectItem,
+    DisplayMenu,
+    HideMenu,
+}
+
 pub struct SystrayEvent {
+    action: SystrayAction,
     menu_index: u32,
 }
 

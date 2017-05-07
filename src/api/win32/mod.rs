@@ -1,4 +1,4 @@
-use {SystrayEvent, SystrayError, Callback, make_callback};
+use {SystrayEvent, SystrayAction, SystrayError, Callback, make_callback};
 use std;
 use std::cell::{Cell, RefCell};
 use std::sync::mpsc::{channel, Sender, Receiver, TryRecvError};
@@ -270,9 +270,23 @@ unsafe extern "system" fn window_proc(h_wnd :HWND,
                                             w_param as i32) as i32;
                 if menu_id != -1 {
                     stash.tx.send(SystrayEvent {
+                        action: SystrayAction::SelectItem,
                         menu_index: menu_id as u32,
                     }).ok();
                 }
+            }
+        });
+    }
+
+    if msg == winapi::winuser::WM_UNINITMENUPOPUP {
+        WININFO_STASH.with(|stash| {
+            let stash = stash.borrow();
+            let stash = stash.as_ref();
+            if let Some(stash) = stash {
+                stash.tx.send(SystrayEvent {
+                    action: SystrayAction::HideMenu,
+                    menu_index: 0,
+                }).ok();
             }
         });
     }
@@ -292,6 +306,10 @@ unsafe extern "system" fn window_proc(h_wnd :HWND,
                     let stash = stash.borrow();
                     let stash = stash.as_ref();
                     if let Some(stash) = stash {
+                        stash.tx.send(SystrayEvent {
+                            action: SystrayAction::DisplayMenu,
+                            menu_index: 0,
+                        }).ok();
                         TrackPopupMenu(stash.info.hmenu,
                                        0,
                                        p.x,
@@ -444,6 +462,7 @@ pub struct Window {
     menu_idx: Cell<u32>,
     callback: RefCell<HashMap<u32, Callback>>,
     pub rx: Receiver<SystrayEvent>,
+    menu_displayed: Cell<bool>,
 }
 
 impl Window {
@@ -486,7 +505,8 @@ impl Window {
             windows_loop: Some(windows_loop),
             rx: event_rx,
             menu_idx: Cell::new(0),
-            callback: RefCell::new(HashMap::new())
+            callback: RefCell::new(HashMap::new()),
+            menu_displayed: Cell::new(false),
         };
         Ok(w)
     }
@@ -665,10 +685,20 @@ impl Window {
                     break;
                 }
             }
-            if (*self.callback.borrow()).contains_key(&msg.menu_index) {
-                let f = (*self.callback.borrow_mut()).remove(&msg.menu_index).unwrap();
-                f(&self);
-                (*self.callback.borrow_mut()).insert(msg.menu_index, f);
+            match msg.action {
+                SystrayAction::DisplayMenu => {
+                    self.menu_displayed.set(true);
+                },
+                SystrayAction::HideMenu => {
+                    self.menu_displayed.set(false);
+                },
+                SystrayAction::SelectItem => {
+                    if (*self.callback.borrow()).contains_key(&msg.menu_index) {
+                        let f = (*self.callback.borrow_mut()).remove(&msg.menu_index).unwrap();
+                        f(&self);
+                        (*self.callback.borrow_mut()).insert(msg.menu_index, f);
+                    }
+                },
             }
             if !blocking {
                 break;
@@ -738,6 +768,10 @@ impl Window {
         } else {
             Err( unsafe { get_win_os_error("Error setting icon from buffer") })
         }
+    }
+
+    pub fn menu_displayed(&self) -> bool {
+        self.menu_displayed.get()
     }
 
     pub fn shutdown(&self) -> Result<(), SystrayError> {

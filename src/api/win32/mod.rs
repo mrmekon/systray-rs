@@ -5,7 +5,10 @@ use std::sync::mpsc::{channel, Sender, Receiver, TryRecvError};
 use std::os::windows::ffi::OsStrExt;
 use std::ffi::OsStr;
 use std::thread;
+use std::slice;
 use std::collections::HashMap;
+use encoding::{Encoding, EncoderTrap};
+use encoding::all::UTF_16LE;
 use winapi;
 use winapi::{MENUITEMINFOW, LPMENUITEMINFOA, LPMENUITEMINFOW, c_int, RECT, UINT, BOOL, ULONG_PTR, CHAR, GUID, WCHAR};
 use user32;
@@ -522,13 +525,18 @@ impl Window {
     pub fn set_tooltip(&self, tooltip: &String) -> Result<(), SystrayError> {
         // Add Tooltip
         debug!("Setting tooltip to {}", tooltip);
-        // Gross way to convert String to [i8; 128]
-        // TODO: Clean up conversion, test for length so we don't panic at runtime
-        let tt = tooltip.as_bytes().clone();
         let mut nid = get_nid_struct(&self.info.hwnd);
-        for i in 0..tt.len() {
-            nid.szTip[i] = tt[i] as u16;
+        // Gross way to convert String to UTF-16 [i16; 128]
+        // TODO: Clean up conversion, test for length so we don't panic at runtime
+        let mut v: Vec<u8> = UTF_16LE.encode(&tooltip, EncoderTrap::Strict).unwrap();
+        v.push(0); v.push(0); // NUL-terminate
+        let utf16: &[u16] = unsafe {
+            slice::from_raw_parts(v.as_ptr() as *const _, v.len()/2)
+        };
+        for i in 0..std::cmp::min(utf16.len(), 128) {
+            nid.szTip[i] = utf16[i];
         }
+        nid.szTip[127] = 0; // NUL-terminate
         nid.uFlags = winapi::NIF_TIP;
         unsafe {
             if Shell_NotifyIconW(winapi::NIM_MODIFY,

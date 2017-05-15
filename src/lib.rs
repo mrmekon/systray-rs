@@ -10,6 +10,8 @@ extern crate kernel32;
 extern crate user32;
 #[cfg(target_os = "windows")]
 extern crate libc;
+#[cfg(target_os = "windows")]
+extern crate encoding;
 
 pub mod api;
 

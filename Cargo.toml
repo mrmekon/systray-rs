@@ -17,6 +17,7 @@ winapi="0.2"
 user32-sys="0.2"
 kernel32-sys="0.2"
 libc="0.2"
+encoding="0.2.33"
 
 # [target.'cfg(target_os = "macos")'.dependencies]
 # objc="*"
